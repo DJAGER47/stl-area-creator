@@ -1,0 +1,6 @@
+.venv/
+cache/
+data/tmp_cache/
+__pycache__
+stl/
+*.gpkg
