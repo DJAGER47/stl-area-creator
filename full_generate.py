@@ -11,6 +11,8 @@ from pyproj import Transformer
 from scipy.spatial import Delaunay
 from shapely.geometry import MultiPolygon, Point, Polygon
 
+import pandas as pd
+
 import srtm
 from stl import mesh
 
@@ -19,26 +21,20 @@ WGS84 = 'EPSG:4326'
 UTM = 'EPSG:32646'
 
 SCALE = 0.0003
-SCALE_H = SCALE * 10
 
 _start_time = time.perf_counter()
 _start_time_total = time.perf_counter()
 
 
-def mylog(x):
-    return np.log2(x)
-
+def func(x):
+    x = x*math.tan(math.radians(1)) + 1
+    x = np.log2(x)
+    x = x*(math.tan(math.radians(100)) + 10)
+    return x
 
 def log_scale_elevation(elevations):
-    # h_min = mylog(1)
-    # h_max = mylog(6000)
 
-    # heights = np.array([h for _, _, h in elevations])
-    # heights = np.maximum(heights, 1)
-    # adjusted_heights = mylog(heights)
-    # adjusted_heights = (adjusted_heights - h_min) / (h_max - h_min) * h_max
-    # adjusted_elevations = [(x * SCALE, y * SCALE, h * SCALE_H) for (x, y, _), h in zip(elevations, adjusted_heights)]
-    adjusted_elevations = [(x * SCALE, y * SCALE, h * SCALE_H) for (x, y, h) in elevations]
+    adjusted_elevations = [(x * SCALE, y * SCALE, func(h))  for (x, y, h) in elevations]
 
     return np.array(adjusted_elevations)
 
@@ -226,9 +222,6 @@ def bottom_stl(contour_zero):
     filtered_triangles_bottom = []
     for simplex in tri_bottom.simplices:
         triangle = Polygon(contour_zero[simplex])
-        # intersection = polygon.intersection(triangle)
-        # if np.isclose(triangle.area, intersection.area):
-        #     filtered_triangles_bottom.append(simplex)
         if polygon.contains(triangle):
             filtered_triangles_bottom.append(simplex)
     print(f"\tbot_triangles\ttime: {print_time():.2f}s")
@@ -242,7 +235,7 @@ def bottom_stl(contour_zero):
     return bottom_surface_mesh
 
 
-def combined_stl(area, wall, bottom):  # , path_name):
+def combined_stl(area, wall, bottom):
     combined_vectors = np.concatenate([area.vectors, wall.vectors, bottom.vectors])
 
     combined_mesh = mesh.Mesh(np.zeros(combined_vectors.shape[0], dtype=mesh.Mesh.dtype))
@@ -254,7 +247,6 @@ def combined_stl(area, wall, bottom):  # , path_name):
     combined_mesh.update_normals()
 
     return combined_mesh
-    # combined_mesh.save(path_name)
 
 
 def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
@@ -317,6 +309,10 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
     for i, points in enumerate(utm_mesh_inside):
         utm_mesh_inside[i] = GetHeight_utm_srtm(points, step_m)
 
+    # df_mesh = pd.DataFrame(utm_mesh_inside[0])
+    # # Сохраняем в CSV файл
+    # df_mesh.to_csv('mesh.csv', index=False)
+
     for i, points in enumerate(utm_contour):
         gdf_points = gpd.GeoDataFrame({'geometry': points})
         utm_contour[i] = GetHeight_utm_srtm(gdf_points, step_m)
@@ -338,7 +334,6 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
     for i in range(0, count_stl):
         area_scaled_points.append(log_scale_elevation(utm_mesh_inside[i]))
         contour_scaled_points.append(log_scale_elevation(utm_contour[i]))
-        # contour_zero_scaled_points.append(np.array([(x * SCALE, y * SCALE, h) for (x, y, h) in utm_contour_zero[i]]))
         contour_zero_scaled_points.append(log_scale_elevation(utm_contour_zero[i]))
 
     area_stl_list = list()
@@ -373,41 +368,44 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
 
     # sity
     stl_sity = list()
-    coordinates_obl = ('54.7814057', '32.0461261')  # get_city_coordinates(obl_name)
-    coordinates_obl = convert_crs(float(coordinates_obl[1]), float(coordinates_obl[0]))
-    for i, polygon in enumerate(utm_contour_geometry):
-        if polygon.contains(coordinates_obl):
-            utm_points = circle_points(coordinates_obl.x, coordinates_obl.y, 5000, 20)
-            gdf_points = gpd.GeoDataFrame({'geometry': utm_points})
-            circle = GetHeight_utm_srtm(gdf_points, step_m)
+    # coordinates_obl = ('54.7814057', '32.0461261')  # get_city_coordinates(obl_name)
+    # coordinates_obl = convert_crs(float(coordinates_obl[1]), float(coordinates_obl[0]))
+    # for i, polygon in enumerate(utm_contour_geometry):
+    #     if polygon.contains(coordinates_obl):
+    #         utm_points = circle_points(coordinates_obl.x, coordinates_obl.y, 5000, 20)
+    #         gdf_points = gpd.GeoDataFrame({'geometry': utm_points})
+    #         circle = GetHeight_utm_srtm(gdf_points, step_m)
 
-            max_z = max(circle, key=lambda x: x[2])[2]
-            circle_bot = np.array(log_scale_elevation([(x, y, 0) for (x, y, _) in circle]))
-            circle_top = np.array(log_scale_elevation([(x, y, max_z + 100) for (x, y, _) in circle]))
+    #         max_z = max(circle, key=lambda x: x[2])[2]
+    #         circle_bot = np.array(log_scale_elevation([(x, y, 0) for (x, y, _) in circle]))
+    #         circle_top = np.array(log_scale_elevation([(x, y, max_z + 100) for (x, y, _) in circle]))
 
-            tri = Delaunay(circle_bot[:, :2])
+    #         tri = Delaunay(circle_bot[:, :2])
 
-            bot_mesh = mesh.Mesh(np.zeros(tri.simplices.shape[0], dtype=mesh.Mesh.dtype))
-            top_mesh = mesh.Mesh(np.zeros(tri.simplices.shape[0], dtype=mesh.Mesh.dtype))
-            for i, f in enumerate(tri.simplices):
-                for j in range(3):
-                    bot_mesh.vectors[i][j] = circle_bot[f[j], :]
-                    top_mesh.vectors[i][j] = circle_top[f[j], :]
+    #         bot_mesh = mesh.Mesh(np.zeros(tri.simplices.shape[0], dtype=mesh.Mesh.dtype))
+    #         top_mesh = mesh.Mesh(np.zeros(tri.simplices.shape[0], dtype=mesh.Mesh.dtype))
+    #         for i, f in enumerate(tri.simplices):
+    #             for j in range(3):
+    #                 bot_mesh.vectors[i][j] = circle_bot[f[j], :]
+    #                 top_mesh.vectors[i][j] = circle_top[f[j], :]
 
-            wall_mesh = wall_stl(circle_bot, circle_top)
-            stl_sity.append(combined_stl(top_mesh, wall_mesh, bot_mesh))
-        else:
-            stl_sity.append(None)
+    #         wall_mesh = wall_stl(circle_bot, circle_top)
+    #         stl_sity.append(combined_stl(top_mesh, wall_mesh, bot_mesh))
+    #     else:
+    #         stl_sity.append(None)
 
+    # for i, obl in enumerate(list_stl):
+    #     if stl_sity[i] is None:
+    #         obl.update_normals()
+    #         obl.save(f'{path_save}{obl_name}_{step_m}_{i}.stl')
+    #     else:
+    #         combined_mesh_data = np.concatenate([obl.data, stl_sity[i].data])
+    #         combined_mesh = mesh.Mesh(combined_mesh_data)
+    #         combined_mesh.update_normals()
+    #         combined_mesh.save(f'{path_save}{obl_name}_{step_m}_{i}.stl')
     for i, obl in enumerate(list_stl):
-        if stl_sity[i] is None:
-            obl.update_normals()
-            obl.save(f'{path_save}{obl_name}_{step_m}_{i}.stl')
-        else:
-            combined_mesh_data = np.concatenate([obl.data, stl_sity[i].data])
-            combined_mesh = mesh.Mesh(combined_mesh_data)
-            combined_mesh.update_normals()
-            combined_mesh.save(f'{path_save}{obl_name}_{step_m}_{i}.stl')
+        obl.update_normals()
+        obl.save(f'{path_save}{obl_name}_{step_m}_{i}.stl')
 
     print(f"All done | time {((time.perf_counter() - _start_time_total)/60):.2f}m")
 
@@ -422,6 +420,9 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Error\nfull_generate.py step_m (obl)")
+        gpkd = gpd.read_file("data/gadm41_RUS.gpkg", layer="ADM_ADM_1")
+        for i in range(0, len(gpkd["NAME_1"])):
+            print(f'{i:02}\t{gpkd["NAME_1"][i]:<20}\t{gpkd["NL_NAME_1"][i]}')
         exit(-1)
 
     step = int(sys.argv[1])
