@@ -11,10 +11,10 @@
             "program": "${file}",
             "console": "integratedTerminal",
             // "python": "${workspaceFolder}/.venv/bin/python",
-            // "args": [
-            //     "5000",
-            //     "Smolensk"
-            // ]
+            "args": [
+                "5000",
+                "Карачаево-Черкесская Республика"
+            ]
         }
     ]
 }
