@@ -4,6 +4,7 @@ import sys
 import time
 import tracemalloc
 
+import geojson
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,17 +13,18 @@ from OSMPythonTools.nominatim import Nominatim
 from OSMPythonTools.overpass import Overpass, overpassQueryBuilder
 from pyproj import Transformer
 from scipy.spatial import Delaunay
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Point, Polygon, shape
 
 import srtm
 from stl import mesh
 
 METERS_PER_DEGREE = 111320
+WATER_SETBACK = 10000 / METERS_PER_DEGREE # 10 км от воды
 MIN_AREA = 100
 WGS84 = 'EPSG:4326'
 UTM = 'EPSG:32646'
 
-SCALE = 0.0005
+SCALE = 0.0003
 
 _start_time = time.perf_counter()
 _start_time_total = time.perf_counter()
@@ -38,7 +40,6 @@ def func(x):
     x = np.log2(x) + 1
     x = np.log10(x) * 30
     return x
-
 
 def scale_elevation(elevations):
     adjusted_elevations = [(x * SCALE, y * SCALE, func(h))  for (x, y, h) in elevations]
@@ -126,7 +127,7 @@ def circle_points(cx, cy, radius, num_points):
     return points
 
 
-def GetHeight(wgs84_points, step):
+def GetHeight(wgs84_points, step, water):
     find = [
         (0, -step),
         (0, step),
@@ -142,20 +143,31 @@ def GetHeight(wgs84_points, step):
 
     new_points = list()
     for i, (lon, lat) in enumerate(wgs84_points):
-        h = elevation_data.get_elevation(lat, lon)
 
-        index = 0
-        multy = 1
-        while h is None:
-            wgs84_lon = wgs84_points[i][0] + multy * find[index][0]
-            wgs84_lat = wgs84_points[i][1] + multy * find[index][1]
-            h = elevation_data.get_elevation(wgs84_lat, wgs84_lon)
-            index += 1
-            if len(find) == index:
-                index = 0
-                multy += 1
+        point = Point(lon, lat)
+        mins_dist = [point.distance(area) for area in water]
+        min_dist = min(mins_dist)[0]
+        coef = min(min_dist, WATER_SETBACK) / WATER_SETBACK
 
-        new_points.append((wgs84_points[i][0], wgs84_points[i][1], h))
+        if lat < 60:
+            h = elevation_data.get_elevation(lat, lon)
+            index = 0
+            multy = 1
+            while h is None:
+                wgs84_lon = wgs84_points[i][0] + multy * find[index][0]
+                wgs84_lat = wgs84_points[i][1] + multy * find[index][1]
+                h = elevation_data.get_elevation(wgs84_lat, wgs84_lon)
+                index += 1
+                if len(find) == index:
+                    index = 0
+                    multy += 1
+
+            if h < 0:
+                print(f"h: {h}")
+                h = 0
+            new_points.append((wgs84_points[i][0], wgs84_points[i][1], h * coef))
+        else:
+            new_points.append((wgs84_points[i][0], wgs84_points[i][1], 0.01 * coef))
 
     return new_points
 
@@ -381,15 +393,14 @@ def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero):
     return list_stl
 
 
-def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
+def generate(obl_name: str, path_save: str, step_m: int, gpkd, water) -> None:
     fig, ax = plt.subplots(figsize=(5, 5))
+    transformer = Transformer.from_crs(WGS84, UTM, always_xy=True)
     # -----------------------------------------------------------------
     step_deg = step_m / METERS_PER_DEGREE
-    # oblast = gpkd[gpkd["NAME_1"] == obl_name]
-    # name_oblast = gpkd["NL_NAME_1"][gpkd.index[gpkd["NAME_1"] == obl_name].tolist()[0]]
-    # print(f"\nStart {obl_name} - {name_oblast} | step_m {step_m}m | step_deg {step_deg}")
-    # print(f'Contour done!   time: {print_time():.2f}s')
-    # print(f'wgs84: {oblast.crs} ## EPSG:4326')
+
+    # print(f'utm step {step_m * SCALE * 100*1000}')
+    # exit()
 
     oblast = gpkd[gpkd["region"] == obl_name]
     print(f"\nStart {obl_name} | step_m {step_m}m | step_deg {step_deg}")
@@ -410,18 +421,31 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
     #  Height
     # -----------------------------------------------------------------
     for i, polygon in enumerate(contour):
-        contour[i] = GetHeight(polygon.exterior.coords, step_deg)
+        contour[i] = GetHeight(polygon.exterior.coords, step_deg, water)
         
     for i, points in enumerate(area_mesh):
-        area_mesh[i] = GetHeight([(point.x, point.y) for point in points.geometry], step_deg)
+        area_mesh[i] = GetHeight([(point.x, point.y) for point in points.geometry], step_deg, water)
 
     print(f'Height done! time: {print_time():.2f}s')
+
+    # oblast.plot(ax=ax, alpha=0.1, color='g')
+    # for geom in water:
+    #     gdf = gpd.GeoDataFrame({'geometry': [geom[0]]})
+    #     gdf.plot(ax=ax, color='lightblue', edgecolor='blue', alpha=0.1)
+
+    # for (x,y,h,a) in contour[0]:
+    #     plt.scatter(x, y, color='red', alpha=a)
+
+    # for (x,y,h,a) in area_mesh[0]:
+    #     if a != 0:
+    #         plt.scatter(x, y, color='green', alpha=a)
+    # plt.show()
+    # exit()
 
     # -----------------------------------------------------------------
     #  Convert to UTM
     # -----------------------------------------------------------------
     # list(x, y, h)
-    transformer = Transformer.from_crs(WGS84, UTM, always_xy=True)
 
     utm_contour = list()
     for points in contour:
@@ -469,28 +493,32 @@ def generate(obl_name: str, path_save: str, step_m: int, gpkd) -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Error\nfull_generate.py step_m (obl)")
-        # gpkd = gpd.read_file("data/gadm41_RUS.gpkg", layer="ADM_ADM_1")
-        # for i in range(0, len(gpkd["NAME_1"])):
-        #     print(f'{i:02}\t{gpkd["NAME_1"][i]:<20}\t{gpkd["NL_NAME_1"][i]}')
         geo_json = gpd.read_file("data/russia_regions.geojson")
         for i in range(0, len(geo_json["region"])):
             print(f'{i:02}\t{geo_json["region"][i]:<20}')
-        exit(-1)
+        exit(1)
 
     step = int(sys.argv[1])
     path = "stl/"
-    # gpkd = gpd.read_file("data/gadm41_RUS.gpkg", layer="ADM_ADM_1")
     gpkd = gpd.read_file("data/russia_regions.geojson")
 
+    water = list()
+    paths_water = {"data/sea/черное.geojson"}
+    
+    for path_water in paths_water:
+        with open(path_water, 'r') as f:
+            sea_data = geojson.load(f)
+        water.append([shape(feature['geometry']) for feature in sea_data['features']])
 
     if len(sys.argv) == 3:
         obl_name = sys.argv[2]
-        generate(obl_name, path, step, gpkd)
+        generate(obl_name, path, step, gpkd, water)
     else:
 
         for i in range(0, len(gpkd["region"])):
+            print('-' * 30)
             print(f'{i:02}\t{gpkd["region"][i]:<20}')
-            generate(gpkd["region"][i], path, step, gpkd)
+            generate(gpkd["region"][i], path, step, gpkd, water)
 
 
     size, peak = tracemalloc.get_traced_memory()
