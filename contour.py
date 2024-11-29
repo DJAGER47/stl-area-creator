@@ -8,8 +8,28 @@ from shapely.geometry import shape
 overpass = Overpass()
 nominatim = Nominatim()
 
-output_filename = "лаптевых.geojson"
-area = nominatim.query("лаптевых море", limit=1).toJSON()[0]
+# НЕ ЗАГРУЗИЛИСЬ!!!!!
+# output_filename = "лаптевых.geojson"
+# area = nominatim.query("лаптевых море", limit=1).toJSON()[0]
+
+# output_filename = "берингово.geojson"
+# area = nominatim.query("берингово море", limit=1).toJSON()[0]
+
+# output_filename = "чукотское.geojson"
+# area = nominatim.query("чукотское море", limit=1).toJSON()[0]
+
+
+
+#--------------------------------------------------------------------------
+
+# output_filename = "восточно-сибирское.geojson"
+# area = nominatim.query("восточно-сибирское море", limit=1).toJSON()[0]
+
+# output_filename = "охотское.geojson"
+# area = nominatim.query("охотское море", limit=1).toJSON()[0]
+
+# output_filename = "японское.geojson"
+# area = nominatim.query("японское море", limit=1).toJSON()[0]
 
 # output_filename = 'Карское.geojson'
 # area = nominatim.query('карское море', limit=1).toJSON()[0]
@@ -38,6 +58,8 @@ overpass_query = f"""
 {osm_type}({osm_id});
 out geom;
 """
+
+print(overpass_query)
 
 result = overpass.query(overpass_query)
 element = result.elements()[0]
