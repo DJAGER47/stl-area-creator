@@ -442,9 +442,7 @@ if __name__ == "__main__":
         obl_name = sys.argv[2]
         generate(obl_name, path, step, gpkd, water)
     else:
-
         for i in range(0, len(gpkd["region"])):
-            print(f'{i:02}\t{gpkd["region"][i]:<20}')
             generate(gpkd["region"][i], path, step, gpkd, water)
 
     print('-' * 100)
