@@ -17,6 +17,12 @@ h3 = h3 / h3[999] * 25
 plt.plot(x_values, h3, "black")
 
 
+# №4
+h3 = np.log2(x_values*0.001 + 1)
+h3 = h3 / h3[999] * 50
+plt.plot(x_values, h3, "yellow")
+
+
 
 x_ticks = np.arange(0, 6000, 200)  # Шаг 200
 y_ticks = np.arange(0, 40, 5)
