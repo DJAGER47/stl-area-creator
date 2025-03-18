@@ -12,9 +12,12 @@
             "console": "integratedTerminal",
             // "python": "${workspaceFolder}/.venv/bin/python",
             "args": [
-                "5000",
+                "-s",
+                "10000",
+                "-n",
                 "Карачаево-Черкесская Республика"
             ]
         }
     ]
 }
+// "Карачаево-Черкесская Республика"
