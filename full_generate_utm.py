@@ -5,7 +5,6 @@ import sys
 import time
 import tracemalloc
 import logging
-from tqdm import tqdm
 
 import geojson
 import geopandas as gpd
@@ -20,12 +19,12 @@ from shapely.geometry import MultiPolygon, Point, Polygon, shape
 import srtm
 from stl import mesh
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='%(message)s',
     handlers=[logging.StreamHandler()]
 )
+# format='%(asctime)s [%(levelname)s] %(message)s',
 logger = logging.getLogger(__name__)
 
 SCALE = 0.0003
@@ -45,20 +44,11 @@ class Timer:
     def __enter__(self):
         self._start = time.perf_counter()
         self._lap = self._start
-        # logger.info(f"Starting {self.name}...")
         return self
-
-    def lap(self, message: str):
-        current = time.perf_counter()
-        elapsed = current - self._lap
-        self._lap = current
-        # Форматирование с фиксированной шириной
-        logger.info(f"{message + ':':<50} {elapsed:>7.2f}s")
 
     def __exit__(self, *args):
         total = time.perf_counter() - self._start
-        # Выравнивание итогового времени
-        logger.info(f"{self.name + ' - Total':<50} {total:>7.2f}s")
+        logger.info(f"{self.name:<50} {total:>7.2f}s")
 
 
 def func(x_values):
@@ -155,7 +145,7 @@ def make_contour(geo_simply, step_m):
     with Timer("Contour creation"):
         contour_raw = [bypass_polygon(poly, step_m) for poly in geo_simply.geometry]
         contour = []
-        for poly in tqdm(contour_raw, desc="Processing polygons"):
+        for poly in contour_raw:
             if len(poly) > 50:
                 p = Polygon(poly)
                 minx, miny, maxx, maxy = p.bounds
@@ -167,7 +157,7 @@ def make_contour(geo_simply, step_m):
 def make_mesh(contour, step_m):
     mesh = [[] for _ in range(len(contour))]
     with Timer("Mesh generation"):
-        for i, polygon in enumerate(tqdm(contour, desc="Generating mesh")):
+        for i, polygon in enumerate(contour):
             minx, miny, maxx, maxy = polygon.bounds
             for x in frange(minx, maxx, step_m):
                 for y in frange(miny, maxy, step_m):
@@ -178,7 +168,7 @@ def make_mesh(contour, step_m):
 def filter_mesh(contour, mesh):
     mesh_inside = []
     with Timer("Mesh filtering"):
-        for i, polygon in enumerate(tqdm(contour, desc="Filtering mesh")):
+        for i, polygon in enumerate(contour):
             gdf_points = gpd.GeoDataFrame({'geometry': mesh[i]})
             mesh_inside.append(gdf_points[gdf_points.within(polygon)])
     return mesh_inside
@@ -270,7 +260,6 @@ def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero):
 def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
     total_timer = Timer(f"Processing {obl_name}")
     with total_timer:
-        # fig, ax = plt.subplots(figsize=(5, 5))
         logger.info(f"{'Starting parameters':<50} Step: {step_m}m | Scale: {step_m * SCALE:.2f}mm")
         
         with Timer("Geometry preparation"):
@@ -284,12 +273,12 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
         with Timer("Height processing"):
             min_h = 6000
             max_h = 0
-            for i, polygon in enumerate(tqdm(contour, desc="Contour height")):
+            for i, polygon in enumerate(contour):
                 contour[i] = GetHeight(polygon.exterior.coords, step_m, water)
                 min_h = min(min_h, min(contour[i], key=lambda x: x[2])[2])
                 max_h = max(max_h, max(contour[i], key=lambda x: x[2])[2])
 
-            for i, points in enumerate(tqdm(area_mesh, desc="Area height")):
+            for i, points in enumerate(area_mesh):
                 area_mesh[i] = GetHeight([(point.x, point.y) for point in points.geometry], step_m, water)
                 min_h = min(min_h, min(area_mesh[i], key=lambda x: x[2])[2])
                 max_h = max(max_h, max(area_mesh[i], key=lambda x: x[2])[2])
