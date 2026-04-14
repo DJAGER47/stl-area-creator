@@ -1,6 +1,7 @@
 .venv/
 cache/
 data/tmp_cache/
+data/tmp_cache_copernicus/
 __pycache__
 stl/
 *.gpkg

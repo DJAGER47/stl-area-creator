@@ -5,3 +5,4 @@ OSMPythonTools
 scipy
 requests
 numpy-stl
+rasterio

@@ -17,6 +17,7 @@ from scipy.spatial import Delaunay
 from shapely.geometry import MultiPolygon, Point, Polygon, shape
 
 import srtm
+import copernicus
 from stl import mesh
 
 logging.basicConfig(
@@ -33,7 +34,13 @@ WGS84 = 'EPSG:4326'
 UTM = 'EPSG:32646'
 REDUCE = 0.10  # mm
 
-elevation_data = srtm.get_data(local_cache_dir="data/tmp_cache")
+# Выбор источника данных высот: 'srtm' или 'copernicus'
+ELEVATION_SOURCE = 'copernicus'  # Измените на 'srtm' для использования SRTM
+
+if ELEVATION_SOURCE == 'copernicus':
+    elevation_data = copernicus.get_data(local_cache_dir="data/tmp_cache_copernicus")
+else:
+    elevation_data = srtm.get_data(local_cache_dir="data/tmp_cache")
 
 class Timer:
     def __init__(self, name: str = None):
@@ -91,26 +98,25 @@ def GetHeight(points, step, water):
 
         lon_wgs84 = points_wgs84[i][0]
         lat_wgs84 = points_wgs84[i][1]
-        if lat_wgs84 < 60:
-            h = elevation_data.get_elevation(lat_wgs84, lon_wgs84)
+        
+        # Copernicus DEM имеет глобальное покрытие, поэтому проверка lat_wgs84 < 60 не нужна
+        h = elevation_data.get_elevation(lat_wgs84, lon_wgs84)
 
-            index = 0
-            multy = 1
-            while h is None:
-                lon_utm = points_utm[i][0] + multy * find[index][0]
-                lat_utm = points_utm[i][1] + multy * find[index][1]
-                lon_tmp, lat_tmp = transformer.transform(lon_utm, lat_utm)
-                h = elevation_data.get_elevation(lat_tmp, lon_tmp)
-                index += 1
-                if len(find) == index:
-                    index = 0
-                    multy += 1
+        index = 0
+        multy = 1
+        while h is None:
+            lon_utm = points_utm[i][0] + multy * find[index][0]
+            lat_utm = points_utm[i][1] + multy * find[index][1]
+            lon_tmp, lat_tmp = transformer.transform(lon_utm, lat_utm)
+            h = elevation_data.get_elevation(lat_tmp, lon_tmp)
+            index += 1
+            if len(find) == index:
+                index = 0
+                multy += 1
 
-            if h < 0:
-                h = 0
-            new_points.append((points_utm[i][0], points_utm[i][1], h * coef))
-        else:
-            new_points.append((points_utm[i][0], points_utm[i][1], 0.01 * coef))
+        if h < 0:
+            h = 0
+        new_points.append((points_utm[i][0], points_utm[i][1], h * coef))
 
     return new_points
 
