@@ -72,8 +72,9 @@ class GeoElevationFile:
         lon_pixel = int(lon_pixel)
         lat_pixel = int(lat_pixel)
 
-        # Check bounds
-        if lon_pixel < 0 or lon_pixel >= self.size or lat_pixel < 0 or lat_pixel >= self.size:
+        # Check bounds using actual array dimensions
+        height, width = self.elevations.shape
+        if lon_pixel < 0 or lon_pixel >= width or lat_pixel < 0 or lat_pixel >= height:
             return None
 
         elevation = self.elevations[lat_pixel, lon_pixel]
@@ -105,7 +106,8 @@ class GeoElevationFile:
                 px = int(lon_pixel) + dx
                 py = int(lat_pixel) + dy
 
-                if 0 <= px < self.size and 0 <= py < self.size:
+                height, width = self.elevations.shape
+                if 0 <= px < width and 0 <= py < height:
                     elev = self.elevations[py, px]
                     if elev != self.nodata:
                         distance = mod_math.sqrt(dx*dx + dy*dy)
@@ -136,6 +138,9 @@ class GeoElevationData:
         # Lazy loaded files used in current app:
         self.files: Dict[str, GeoElevationFile] = {}
 
+        # Set of tiles that failed to download (to avoid repeated attempts)
+        self.failed_tiles: Set[str] = set()
+
         # Copernicus DEM base URL
         # Используем публичный S3 бакет с данными
         self.base_url = 'https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com/'
@@ -143,13 +148,18 @@ class GeoElevationData:
     def get_elevation(self, latitude: float, longitude: float, approximate: bool = False) -> Optional[float]:
         """
         Get elevation at the specified latitude and longitude.
+        Returns 0 if the tile failed to download.
         """
         geo_elevation_file = self.get_file(float(latitude), float(longitude))
 
         if not geo_elevation_file:
-            return None
+            # Return 0 if tile failed to download
+            return 0.0
 
-        return geo_elevation_file.get_elevation(float(latitude), float(longitude), approximate)
+        elevation = geo_elevation_file.get_elevation(float(latitude), float(longitude), approximate)
+        if elevation is None:
+            return 0.0
+        return elevation
 
     def _IDW(self, latitude: float, longitude: float, radius: float = 1) -> Optional[float]:
         """
@@ -170,10 +180,15 @@ class GeoElevationData:
         if not file_name:
             return None
 
+        # Check if this tile has failed to download before
+        if file_name in self.failed_tiles:
+            mod_logging.warning(f'Tile {file_name} previously failed to download for coordinates ({latitude}, {longitude})')
+            return None
+
         if file_name in self.files:
             return self.files[file_name]
         else:
-            data = self.retrieve_or_load_file_data(file_name)
+            data = self.retrieve_or_load_file_data(file_name, latitude, longitude)
             if not data:
                 return None
 
@@ -182,7 +197,7 @@ class GeoElevationData:
 
             return result
 
-    def retrieve_or_load_file_data(self, file_name: str) -> Optional[bytes]:
+    def retrieve_or_load_file_data(self, file_name: str, latitude: Optional[float] = None, longitude: Optional[float] = None) -> Optional[bytes]:
         """
         Retrieve file data from local cache or download from server.
         """
@@ -197,17 +212,25 @@ class GeoElevationData:
             mod_logging.info(f'Downloading {url}')
             r = mod_requests.get(url, timeout=self.timeout or mod_utils.DEFAULT_TIMEOUT)
         except mod_requests.exceptions.Timeout:
-            mod_logging.error(f'Connection to {url} failed (timeout)')
+            mod_logging.error(f'Connection to {url} failed (timeout) for coordinates ({latitude}, {longitude})')
+            self.failed_tiles.add(file_name)
+            return None
+        except Exception as e:
+            mod_logging.error(f'Failed to download {url} for coordinates ({latitude}, {longitude}): {e}')
+            self.failed_tiles.add(file_name)
             return None
 
         if r.status_code < 200 or r.status_code >= 300:
-            mod_logging.error(f'Cannot retrieve {url} (status: {r.status_code})')
+            mod_logging.error(f'Cannot retrieve {url} (status: {r.status_code}) for coordinates ({latitude}, {longitude})')
+            self.failed_tiles.add(file_name)
             return None
 
         data = r.content
         mod_logging.info(f'Retrieved {url} ({len(data)} bytes)')
 
         if not data:
+            mod_logging.error(f'Empty data received from {url} for coordinates ({latitude}, {longitude})')
+            self.failed_tiles.add(file_name)
             return None
 
         # Save to local cache

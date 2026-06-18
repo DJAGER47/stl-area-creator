@@ -6,3 +6,5 @@ scipy
 requests
 numpy-stl
 rasterio
+pyproj
+shapely
