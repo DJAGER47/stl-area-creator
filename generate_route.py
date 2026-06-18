@@ -72,10 +72,11 @@ def create_cylinder(center, radius, segments=32):
         
         # Получаем высоту рельефа для этой точки
         lon, lat = transformer_to_wgs84.transform(x, y)
-        h = myLib.elevation_data.get_elevation(lat, lon) + ADD_H
-        if h is None:
+        h = myLib.elevation_data.get_elevation(lat, lon)
+        if h is None or h < 0:
             print(f"Не удалось получить высоту для точки ({lat:.6f}, {lon:.6f})")
             h = 0
+        h += ADD_H
         
         vertices.append([x, y, h])
     
@@ -85,9 +86,9 @@ def create_cylinder(center, radius, segments=32):
         faces.append([i, next_i, i + segments])
         faces.append([next_i, next_i + segments, i + segments])
     
-    # Нижняя крышка
+    # Нижняя крышка (нормаль смотрит вниз: порядок CW при взгляде сверху)
     for i in range(1, segments - 1):
-        faces.append([0, i, i + 1])
+        faces.append([0, i + 1, i])
     
     # Верхняя крышка (триангуляция для неровного верха)
     for i in range(1, segments - 1):
@@ -97,114 +98,101 @@ def create_cylinder(center, radius, segments=32):
 
 
 def create_thick_line(line_points, thickness, segments_per_circle=16):
-    """Создает стену вдоль маршрута: нижний слой на высоте 0, верхний на высоте рельефа"""
-    if len(line_points) < 2:
+    """Создает manifold-меш стены вдоль маршрута с miter-стыками.
+
+    Для каждой точки трека создаются 4 вершины (индекс i*4):
+      +0: left_bottom, +1: right_bottom, +2: left_top, +3: right_top.
+    Нижний слой z=0, верхний — высота рельефа из line_points[i][2].
+    Стыки между сегментами закрываются через miter-смещения (общие вершины),
+    что гарантирует manifold-меш без дублирующихся граней.
+    """
+    n = len(line_points)
+    if n < 2:
         return None, None
-    
+
+    half = thickness / 2
+    pts = [np.array(p, dtype=float) for p in line_points]
+
+    # Нормированные направления каждого сегмента
+    dirs = []
+    for i in range(n - 1):
+        d = pts[i + 1][:2] - pts[i][:2]
+        length = np.linalg.norm(d)
+        if length < 1e-9:
+            dirs.append(dirs[-1] if dirs else np.array([1.0, 0.0]))
+        else:
+            dirs.append(d / length)
+
+    # Перпендикуляры сегментов (повёрнуты влево от направления)
+    perps = [np.array([-d[1], d[0]]) for d in dirs]
+
+    # Miter-смещения для каждой точки трека (XY-вектор длиной ~half)
+    miter_offsets = []
+    for i in range(n):
+        if i == 0:
+            miter_offsets.append(perps[0] * half)
+        elif i == n - 1:
+            miter_offsets.append(perps[-1] * half)
+        else:
+            avg = perps[i - 1] + perps[i]
+            norm_avg = np.linalg.norm(avg)
+            if norm_avg < 1e-9:
+                # Разворот на 180° — используем текущий перпендикуляр
+                miter_offsets.append(perps[i] * half)
+            else:
+                avg = avg / norm_avg
+                cos_a = np.dot(avg, perps[i - 1])
+                # Ограничиваем длину miter (не более 4×half на острых углах)
+                scale = half / max(abs(cos_a), 0.25)
+                miter_offsets.append(avg * scale)
+
+    # Строим вершины: 4 вершины на точку трека
     vertices = []
+    for i, p in enumerate(pts):
+        off = miter_offsets[i]
+        z = p[2]
+        vertices.append([p[0] + off[0], p[1] + off[1], 0.0])  # left_bottom  (+0)
+        vertices.append([p[0] - off[0], p[1] - off[1], 0.0])  # right_bottom (+1)
+        vertices.append([p[0] + off[0], p[1] + off[1], z])    # left_top     (+2)
+        vertices.append([p[0] - off[0], p[1] - off[1], z])    # right_top    (+3)
+
+    # Строим грани с корректными нормалями (правило правой руки):
+    #   A=left_bottom[i],   B=right_bottom[i],  C=left_top[i],   D=right_top[i]
+    #   E=left_bottom[i+1], F=right_bottom[i+1],G=left_top[i+1], H=right_top[i+1]
     faces = []
-    
-    half_thickness = thickness / 2
-    
-    # Создаем сегменты стены между каждой парой точек
-    for i in range(len(line_points) - 1):
-        p1 = np.array(line_points[i])
-        p2 = np.array(line_points[i + 1])
-        
-        # Используем только X и Y координаты для направления
-        p1_xy = np.array([p1[0], p1[1]])
-        p2_xy = np.array([p2[0], p2[1]])
-        
-        # Вектор направления (только по XY)
-        direction = p2_xy - p1_xy
-        length = np.linalg.norm(direction)
-        if length == 0:
-            continue
-        direction = direction / length
-        
-        # Перпендикулярный вектор (для смещения влево-вправо)
-        perpendicular = np.array([-direction[1], direction[0]])
-        
-        # Создаем 4 точки для каждого сегмента (прямоугольник)
-        # p1_left_bottom, p1_right_bottom, p2_left_bottom, p2_right_bottom
-        # p1_left_top, p1_right_top, p2_left_top, p2_right_top
-        
-        # Нижний слой (высота 0)
-        p1_left_bottom = np.array([p1[0] + perpendicular[0] * half_thickness,
-                                    p1[1] + perpendicular[1] * half_thickness, 0])
-        p1_right_bottom = np.array([p1[0] - perpendicular[0] * half_thickness,
-                                     p1[1] - perpendicular[1] * half_thickness, 0])
-        p2_left_bottom = np.array([p2[0] + perpendicular[0] * half_thickness,
-                                    p2[1] + perpendicular[1] * half_thickness, 0])
-        p2_right_bottom = np.array([p2[0] - perpendicular[0] * half_thickness,
-                                     p2[1] - perpendicular[1] * half_thickness, 0])
-        
-        # Верхний слой (высота рельефа)
-        p1_left_top = np.array([p1[0] + perpendicular[0] * half_thickness,
-                                 p1[1] + perpendicular[1] * half_thickness, p1[2]])
-        p1_right_top = np.array([p1[0] - perpendicular[0] * half_thickness,
-                                  p1[1] - perpendicular[1] * half_thickness, p1[2]])
-        p2_left_top = np.array([p2[0] + perpendicular[0] * half_thickness,
-                                 p2[1] + perpendicular[1] * half_thickness, p2[2]])
-        p2_right_top = np.array([p2[0] - perpendicular[0] * half_thickness,
-                                  p2[1] - perpendicular[1] * half_thickness, p2[2]])
-        
-        # Добавляем вершины
-        base_offset = len(vertices)
-        vertices.extend([p1_left_bottom, p1_right_bottom, p2_left_bottom, p2_right_bottom,
-                        p1_left_top, p1_right_top, p2_left_top, p2_right_top])
-        
-        # Создаем грани для сегмента
-        # Нижняя грань
-        faces.append([base_offset, base_offset + 1, base_offset + 2])
-        faces.append([base_offset + 1, base_offset + 3, base_offset + 2])
-        
-        # Верхняя грань
-        faces.append([base_offset + 4, base_offset + 6, base_offset + 5])
-        faces.append([base_offset + 5, base_offset + 6, base_offset + 7])
-        
-        # Боковые грани
-        faces.append([base_offset, base_offset + 2, base_offset + 4])
-        faces.append([base_offset + 2, base_offset + 6, base_offset + 4])
-        
-        faces.append([base_offset + 1, base_offset + 5, base_offset + 3])
-        faces.append([base_offset + 3, base_offset + 5, base_offset + 7])
-        
-        faces.append([base_offset, base_offset + 4, base_offset + 1])
-        faces.append([base_offset + 1, base_offset + 4, base_offset + 5])
-        
-        faces.append([base_offset + 2, base_offset + 3, base_offset + 6])
-        faces.append([base_offset + 3, base_offset + 7, base_offset + 6])
-        
-        # Соединяем с предыдущим сегментом
-        if i > 0:
-            # Предыдущие вершины
-            prev_p1_left_bottom = base_offset - 8
-            prev_p1_right_bottom = base_offset - 7
-            prev_p2_left_bottom = base_offset - 6
-            prev_p2_right_bottom = base_offset - 5
-            prev_p1_left_top = base_offset - 4
-            prev_p1_right_top = base_offset - 3
-            prev_p2_left_top = base_offset - 2
-            prev_p2_right_top = base_offset - 1
-            
-            # Соединяем грани между сегментами
-            # Нижние соединения
-            faces.append([prev_p2_left_bottom, base_offset, prev_p2_right_bottom])
-            faces.append([prev_p2_right_bottom, base_offset, base_offset + 1])
-            
-            # Верхние соединения
-            faces.append([prev_p2_left_top, base_offset + 4, prev_p2_right_top])
-            faces.append([prev_p2_right_top, base_offset + 4, base_offset + 5])
-            
-            # Боковые соединения
-            faces.append([prev_p2_left_bottom, prev_p2_left_top, base_offset])
-            faces.append([base_offset, prev_p2_left_top, base_offset + 4])
-            
-            faces.append([prev_p2_right_bottom, base_offset + 1, prev_p2_right_top])
-            faces.append([base_offset + 1, base_offset + 5, prev_p2_right_top])
-    
-    return np.array(vertices), np.array(faces)
+
+    for i in range(n - 1):
+        A = i * 4;        B = i * 4 + 1;    C = i * 4 + 2;    D = i * 4 + 3
+        E = (i+1) * 4;   F = (i+1) * 4 + 1; G = (i+1) * 4 + 2; H = (i+1) * 4 + 3
+
+        # Нижняя грань (нормаль -Z)
+        faces.append([A, E, F])
+        faces.append([A, F, B])
+
+        # Верхняя грань (нормаль +Z)
+        faces.append([C, H, G])
+        faces.append([C, D, H])
+
+        # Левая боковая грань (нормаль наружу влево)
+        faces.append([A, C, G])
+        faces.append([A, G, E])
+
+        # Правая боковая грань (нормаль наружу вправо)
+        faces.append([B, H, D])
+        faces.append([B, F, H])
+
+    # Передний торец (нормаль против направления движения)
+    A, B, C, D = 0, 1, 2, 3
+    faces.append([A, B, D])
+    faces.append([A, D, C])
+
+    # Задний торец (нормаль по направлению движения)
+    last = (n - 1) * 4
+    E, F, G, H = last, last + 1, last + 2, last + 3
+    faces.append([E, G, H])
+    faces.append([E, H, F])
+
+    return np.array(vertices, dtype=float), np.array(faces, dtype=int)
 
 
 def create_wpt_cylinders(wpt_points, radius, segments=32):
@@ -239,9 +227,11 @@ def create_track_mesh(track_points, thickness, segments_per_circle=16):
     utm_points = []
     for lat, lon in track_points:
         x, y = transformer.transform(lon, lat)
-        h = myLib.elevation_data.get_elevation(lat, lon) + ADD_H
+        h = myLib.elevation_data.get_elevation(lat, lon)
         if h is None or h < 0:
             h = 0
+        h += ADD_H
+
         utm_points.append((x, y, h))
     
     # Создаем толстую линию (высота определяется рельефом)

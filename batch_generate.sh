@@ -22,8 +22,8 @@ if [ ! -f "$LIST_FILE" ]; then
 fi
 
 # Проверка существования скрипта генерации
-if [ ! -f "full_generate_utm.py" ]; then
-    echo "Ошибка: Скрипт full_generate_utm.py не найден"
+if [ ! -f "generate_ground.py" ]; then
+    echo "Ошибка: Скрипт generate_ground.py не найден"
     exit 1
 fi
 
@@ -57,7 +57,7 @@ while IFS= read -r line; do
     echo "----------------------------------------"
     
     # Запуск генерации для текущего региона
-    if python3 full_generate_utm.py -s "$STEP" -n "$REGION"; then
+    if python3 generate_ground.py -s "$STEP" -n "$REGION"; then
         echo "✓ Успешно: $REGION"
         SUCCESS=$((SUCCESS + 1))
     else
