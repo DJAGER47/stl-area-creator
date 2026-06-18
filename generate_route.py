@@ -72,7 +72,7 @@ def create_cylinder(center, radius, segments=32):
         lon, lat = transformer_to_wgs84.transform(x, y)
         h = myLib.elevation_data.get_elevation(lat, lon)
         if h is None:
-            print(f"Не удалось получить высоту для {wpt['name']} ({wpt['lat']}, {wpt['lon']})")
+            print(f"Не удалось получить высоту для точки ({lat:.6f}, {lon:.6f})")
             h = 0
         
         vertices.append([x, y, h])
@@ -268,6 +268,13 @@ def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness):
             logger.info("Track mesh is empty")
     
     with myLib.Timer("STL mesh creation"):
+        # Масштабируем X,Y координаты для соответствия с поверхностью
+        if wpt_vertices is not None and len(wpt_vertices) > 0:
+            wpt_vertices = myLib.scale_elevation(wpt_vertices)
+        
+        if track_vertices is not None and len(track_vertices) > 0:
+            track_vertices = myLib.scale_elevation(track_vertices)
+        
         wpt_mesh = myLib.vertices_faces_to_mesh(wpt_vertices, wpt_faces)
         track_mesh = myLib.vertices_faces_to_mesh(track_vertices, track_faces)
         

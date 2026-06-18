@@ -11,40 +11,37 @@ import json
 import sys
 from pyproj import Transformer, CRS
 from find_center import find_gpx_center
-
-
-WGS84 = 'EPSG:4326'
-UTM = 'EPSG:32646'
+import myLib
 
 
 def latlon_to_utm(lat, lon):
     """
-    Конвертирует географические координаты (WGS84) в UTM.
+    Конвертирует географические координаты (myLib.WGS84) в myLib.UTM.
     
     Args:
         lat: Широта в градусах
         lon: Долгота в градусах
         
     Returns:
-        Кортеж (x, y) в метрах UTM
+        Кортеж (x, y) в метрах myLib.UTM
     """
-    transformer = Transformer.from_crs(WGS84, UTM, always_xy=True)
+    transformer = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
     x, y = transformer.transform(lon, lat)
     return x, y
 
 
 def utm_to_latlon(x, y):
     """
-    Конвертирует UTM координаты в географические (WGS84).
+    Конвертирует myLib.UTM координаты в географические (myLib.WGS84).
     
     Args:
-        x: Координата X в метрах UTM
-        y: Координата Y в метрах UTM
+        x: Координата X в метрах myLib.UTM
+        y: Координата Y в метрах myLib.UTM
         
     Returns:
         Кортеж (lon, lat) в градусах
     """
-    transformer = Transformer.from_crs(UTM, WGS84, always_xy=True)
+    transformer = Transformer.from_crs(myLib.UTM, myLib.WGS84, always_xy=True)
     lon, lat = transformer.transform(x, y)
     return lon, lat
 
@@ -99,7 +96,7 @@ def calculate_hexagon_radius(center_lat, center_lon, bounds):
     Returns:
         Радиус гексагона в метрах
     """
-    # Конвертируем центр в UTM
+    # Конвертируем центр в myLib.UTM
     center_x, center_y = latlon_to_utm(center_lat, center_lon)
     
     # Конвертируем границы в метры относительно центра
@@ -138,7 +135,7 @@ def generate_hexagon_vertices(center_lat, center_lon, radius_meters):
     """
     vertices = []
     
-    # Конвертируем центр в UTM
+    # Конвертируем центр в myLib.UTM
     center_x, center_y = latlon_to_utm(center_lat, center_lon)
     
     # Гексагон имеет 6 вершин, угол между ними 60 градусов (π/3 радиан)
@@ -146,7 +143,7 @@ def generate_hexagon_vertices(center_lat, center_lon, radius_meters):
         angle_deg = 60 * i
         angle_rad = math.radians(angle_deg)
         
-        # Вычисляем координаты вершины в метрах UTM
+        # Вычисляем координаты вершины в метрах myLib.UTM
         x = center_x + radius_meters * math.cos(angle_rad)
         y = center_y + radius_meters * math.sin(angle_rad)
         

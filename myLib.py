@@ -24,7 +24,7 @@ from stl import mesh
 SCALE = 0.0003
 WATER_SETBACK = 10 * 1000  # 10 км от воды
 WGS84 = 'EPSG:4326'
-UTM = 'EPSG:32646'  # UTM зона 46 (для Кавказа)
+UTM = 'EPSG:32646'
 REDUCE = 0.10  # mm
 
 # Выбор источника данных высот: 'srtm' или 'copernicus'

@@ -3,9 +3,7 @@ from shapely.geometry import Point, mapping
 from shapely.geometry.polygon import Polygon
 import math
 from pyproj import Transformer
-
-WGS84 = 'EPSG:4326'
-UTM = 'EPSG:32646'
+import myLib
 
 def circle_points(cx, cy, radius, num_points):
     points = []
@@ -17,8 +15,8 @@ def circle_points(cx, cy, radius, num_points):
     return points
 
 def create_circle(radius, lat, lon):
-    wgs2utm = Transformer.from_crs(WGS84, UTM, always_xy=True)
-    utm2wgs = Transformer.from_crs(UTM, WGS84, always_xy=True)
+    wgs2utm = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
+    utm2wgs = Transformer.from_crs(myLib.UTM, myLib.WGS84, always_xy=True)
 
     centr = wgs2utm.transform(lon, lat)
     points_utm = circle_points(centr[0], centr[1] , radius, 1000)

@@ -43,7 +43,7 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
 
         with myLib.Timer("Coordinate conversion"):
             utm_contour = [[(p[0], p[1], p[2]) for p in points] for points in contour]
-            utm_mesh = [copy.deepcopy(utm_contour[i]) + [(p[0], p[1], p[2]) for p in points] 
+            utm_mesh = [copy.deepcopy(utm_contour[i]) + [(p[0], p[1], p[2]) for p in points]
                        for i, points in enumerate(area_mesh)]
             utm_contour_zero = [[(p[0], p[1], 0) for p in points] for points in utm_contour]
 
@@ -85,7 +85,6 @@ def main():
             water.append([shape(feature['geometry']) for feature in sea_data['features']])
 
     if args.contour:
-        myLib.SCALE = 0.001
         with myLib.Timer("Contour data loading"):
             gpkd = gpd.read_file("contour.geojson")
         generate("Contour", path, args.step, gpkd, water)
