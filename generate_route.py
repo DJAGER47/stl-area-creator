@@ -20,6 +20,8 @@ from stl import mesh
 
 logger = myLib.logger
 
+ADD_H = 150
+
 
 def parse_gpx(gpx_file):
     """Парсит GPX файл и извлекает wpt точки и трек"""
@@ -70,7 +72,7 @@ def create_cylinder(center, radius, segments=32):
         
         # Получаем высоту рельефа для этой точки
         lon, lat = transformer_to_wgs84.transform(x, y)
-        h = myLib.elevation_data.get_elevation(lat, lon)
+        h = myLib.elevation_data.get_elevation(lat, lon) + ADD_H
         if h is None:
             print(f"Не удалось получить высоту для точки ({lat:.6f}, {lon:.6f})")
             h = 0
@@ -237,7 +239,7 @@ def create_track_mesh(track_points, thickness, segments_per_circle=16):
     utm_points = []
     for lat, lon in track_points:
         x, y = transformer.transform(lon, lat)
-        h = myLib.elevation_data.get_elevation(lat, lon)
+        h = myLib.elevation_data.get_elevation(lat, lon) + ADD_H
         if h is None or h < 0:
             h = 0
         utm_points.append((x, y, h))
@@ -315,11 +317,11 @@ def main():
                         help="Путь для сохранения STL файла")
     parser.add_argument('--wpt-radius',
                         type=float,
-                        default=500,
+                        default=400,
                         help="Радиус столбиков для wpt точек (метры)")
     parser.add_argument('--track-thickness',
                         type=float,
-                        default=100,
+                        default=300,
                         help="Толщина линии маршрута (метры)")
     args = parser.parse_args()
     
