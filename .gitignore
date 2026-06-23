@@ -5,3 +5,4 @@ data/tmp_cache_copernicus/
 __pycache__
 stl/
 *.gpkg
+*.geojson

@@ -3,6 +3,9 @@ from shapely.geometry import Point, mapping
 from shapely.geometry.polygon import Polygon
 import math
 from pyproj import Transformer
+
+# Добавляем корневую директорию в путь для импорта myLib
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import myLib
 
 def circle_points(cx, cy, radius, num_points):

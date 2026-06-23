@@ -13,7 +13,9 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 from pyproj import Transformer
-from shapely.geometry import Point
+from shapely.geometry import LineString, MultiPolygon, Point
+from shapely.ops import unary_union
+from scipy.spatial import Delaunay
 
 import myLib
 from stl import mesh
@@ -49,195 +51,188 @@ def parse_gpx(gpx_file):
     return wpt_points, track_points
 
 
-def create_cylinder(center, radius, segments=32):
-    """Создает цилиндр (круглый столбик) с высотой по рельефу для каждой точки"""
-    vertices = []
-    faces = []
-    
-    # Получаем координаты центра в WGS84 для запроса высоты
-    transformer_to_wgs84 = Transformer.from_crs(myLib.UTM, myLib.WGS84, always_xy=True)
-    
-    # Нижний круг (на высоте 0)
-    for i in range(segments):
-        angle = 2 * math.pi * i / segments
-        x = center[0] + radius * math.cos(angle)
-        y = center[1] + radius * math.sin(angle)
-        vertices.append([x, y, 0])
-    
-    # Верхний круг (с высотой по рельефу для каждой точки)
-    for i in range(segments):
-        angle = 2 * math.pi * i / segments
-        x = center[0] + radius * math.cos(angle)
-        y = center[1] + radius * math.sin(angle)
-        
-        # Получаем высоту рельефа для этой точки
-        lon, lat = transformer_to_wgs84.transform(x, y)
-        h = myLib.elevation_data.get_elevation(lat, lon)
-        if h is None or h < 0:
-            print(f"Не удалось получить высоту для точки ({lat:.6f}, {lon:.6f})")
-            h = 0
-        h += ADD_H
-        
-        vertices.append([x, y, h])
-    
-    # Боковые грани
-    for i in range(segments):
-        next_i = (i + 1) % segments
-        faces.append([i, next_i, i + segments])
-        faces.append([next_i, next_i + segments, i + segments])
-    
-    # Нижняя крышка (нормаль смотрит вниз: порядок CW при взгляде сверху)
-    for i in range(1, segments - 1):
-        faces.append([0, i + 1, i])
-    
-    # Верхняя крышка (триангуляция для неровного верха)
-    for i in range(1, segments - 1):
-        faces.append([segments, segments + i, segments + i + 1])
-    
-    return np.array(vertices), np.array(faces)
+def create_wpt_cylinders(wpt_points, radius, buffer_resolution=32):
+    """Создает STL меши для wpt-точек через Shapely Point.buffer() + Delaunay.
 
-
-def create_thick_line(line_points, thickness, segments_per_circle=16):
-    """Создает manifold-меш стены вдоль маршрута с miter-стыками.
-
-    Для каждой точки трека создаются 4 вершины (индекс i*4):
-      +0: left_bottom, +1: right_bottom, +2: left_top, +3: right_top.
-    Нижний слой z=0, верхний — высота рельефа из line_points[i][2].
-    Стыки между сегментами закрываются через miter-смещения (общие вершины),
-    что гарантирует manifold-меш без дублирующихся граней.
+    Аналогично create_track_mesh(): каждый столбик — это круговой полигон,
+    триангулированный Delaunay с нижним (z=0) и верхним (z=рельеф) слоями.
     """
-    n = len(line_points)
-    if n < 2:
+    transformer     = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
+    transformer_inv = Transformer.from_crs(myLib.UTM, myLib.WGS84, always_xy=True)
+
+    all_vertices = []
+    all_faces    = []
+    vertex_offset = 0
+
+    for wpt in wpt_points:
+        # 1) Центр в UTM
+        cx, cy = transformer.transform(wpt['lon'], wpt['lat'])
+
+        # 2) Круговой полигон через Shapely
+        footprint = Point(cx, cy).buffer(radius, resolution=buffer_resolution)
+
+        # 3) Точки контура (CCW для exterior)
+        boundary_coords = np.array(footprint.exterior.coords[:-1])
+        boundary_n      = len(boundary_coords)
+
+        # 4) Внутренняя сетка
+        step         = radius / 3
+        interior_pts = []
+        for gx in np.arange(cx - radius + step / 2, cx + radius, step):
+            for gy in np.arange(cy - radius + step / 2, cy + radius, step):
+                if footprint.contains(Point(gx, gy)):
+                    interior_pts.append([gx, gy])
+
+        if interior_pts:
+            all_xy = np.vstack([boundary_coords, np.array(interior_pts)])
+        else:
+            all_xy = boundary_coords.copy()
+
+        total_n = len(all_xy)
+
+        # 5) Delaunay; отбрасываем треугольники вне footprint
+        tri             = Delaunay(all_xy)
+        valid_simplices = []
+        for simplex in tri.simplices:
+            mx, my = all_xy[simplex].mean(axis=0)
+            if footprint.contains(Point(mx, my)):
+                valid_simplices.append(simplex)
+
+        # 6) Высоты
+        elevations = np.zeros(total_n)
+        for idx, (vx, vy) in enumerate(all_xy):
+            lon_v, lat_v = transformer_inv.transform(vx, vy)
+            h = myLib.elevation_data.get_elevation(lat_v, lon_v)
+            if h is None:
+                h = 0
+            h += ADD_H
+            if h < 0:
+                h = 0
+            elevations[idx] = h
+
+        # 7) Вершины: нижний (z=0) + верхний (z=elevation)
+        verts_bot = np.column_stack([all_xy, np.zeros(total_n)])
+        verts_top = np.column_stack([all_xy, elevations])
+        verts     = np.vstack([verts_bot, verts_top])
+
+        faces = []
+
+        # Нижняя поверхность (нормаль -Z)
+        for s in valid_simplices:
+            faces.append([s[0], s[2], s[1]])
+
+        # Верхняя поверхность (нормаль +Z)
+        for s in valid_simplices:
+            faces.append([total_n + s[0], total_n + s[1], total_n + s[2]])
+
+        # Боковые стены по контуру (CCW → нормаль наружу)
+        for i in range(boundary_n):
+            j = (i + 1) % boundary_n
+            A = i;           B = j
+            C = total_n + i; D = total_n + j
+            faces.append([A, B, C])
+            faces.append([B, D, C])
+
+        # Накапливаем со смещением индексов
+        all_vertices.extend(verts)
+        all_faces.extend((np.array(faces, dtype=int) + vertex_offset).tolist())
+        vertex_offset += len(verts)
+
+    if not all_vertices:
         return None, None
 
-    half = thickness / 2
-    pts = [np.array(p, dtype=float) for p in line_points]
-
-    # Нормированные направления каждого сегмента
-    dirs = []
-    for i in range(n - 1):
-        d = pts[i + 1][:2] - pts[i][:2]
-        length = np.linalg.norm(d)
-        if length < 1e-9:
-            dirs.append(dirs[-1] if dirs else np.array([1.0, 0.0]))
-        else:
-            dirs.append(d / length)
-
-    # Перпендикуляры сегментов (повёрнуты влево от направления)
-    perps = [np.array([-d[1], d[0]]) for d in dirs]
-
-    # Miter-смещения для каждой точки трека (XY-вектор длиной ~half)
-    miter_offsets = []
-    for i in range(n):
-        if i == 0:
-            miter_offsets.append(perps[0] * half)
-        elif i == n - 1:
-            miter_offsets.append(perps[-1] * half)
-        else:
-            avg = perps[i - 1] + perps[i]
-            norm_avg = np.linalg.norm(avg)
-            if norm_avg < 1e-9:
-                # Разворот на 180° — используем текущий перпендикуляр
-                miter_offsets.append(perps[i] * half)
-            else:
-                avg = avg / norm_avg
-                cos_a = np.dot(avg, perps[i - 1])
-                # Ограничиваем длину miter (не более 4×half на острых углах)
-                scale = half / max(abs(cos_a), 0.25)
-                miter_offsets.append(avg * scale)
-
-    # Строим вершины: 4 вершины на точку трека
-    vertices = []
-    for i, p in enumerate(pts):
-        off = miter_offsets[i]
-        z = p[2]
-        vertices.append([p[0] + off[0], p[1] + off[1], 0.0])  # left_bottom  (+0)
-        vertices.append([p[0] - off[0], p[1] - off[1], 0.0])  # right_bottom (+1)
-        vertices.append([p[0] + off[0], p[1] + off[1], z])    # left_top     (+2)
-        vertices.append([p[0] - off[0], p[1] - off[1], z])    # right_top    (+3)
-
-    # Строим грани с корректными нормалями (правило правой руки):
-    #   A=left_bottom[i],   B=right_bottom[i],  C=left_top[i],   D=right_top[i]
-    #   E=left_bottom[i+1], F=right_bottom[i+1],G=left_top[i+1], H=right_top[i+1]
-    faces = []
-
-    for i in range(n - 1):
-        A = i * 4;        B = i * 4 + 1;    C = i * 4 + 2;    D = i * 4 + 3
-        E = (i+1) * 4;   F = (i+1) * 4 + 1; G = (i+1) * 4 + 2; H = (i+1) * 4 + 3
-
-        # Нижняя грань (нормаль -Z)
-        faces.append([A, E, F])
-        faces.append([A, F, B])
-
-        # Верхняя грань (нормаль +Z)
-        faces.append([C, H, G])
-        faces.append([C, D, H])
-
-        # Левая боковая грань (нормаль наружу влево)
-        faces.append([A, C, G])
-        faces.append([A, G, E])
-
-        # Правая боковая грань (нормаль наружу вправо)
-        faces.append([B, H, D])
-        faces.append([B, F, H])
-
-    # Передний торец (нормаль против направления движения)
-    A, B, C, D = 0, 1, 2, 3
-    faces.append([A, B, D])
-    faces.append([A, D, C])
-
-    # Задний торец (нормаль по направлению движения)
-    last = (n - 1) * 4
-    E, F, G, H = last, last + 1, last + 2, last + 3
-    faces.append([E, G, H])
-    faces.append([E, H, F])
-
-    return np.array(vertices, dtype=float), np.array(faces, dtype=int)
+    return np.array(all_vertices, dtype=float), np.array(all_faces, dtype=int)
 
 
-def create_wpt_cylinders(wpt_points, radius, segments=32):
-    """Создает STL меши для всех wpt точек с высотой по рельефу"""
-    transformer = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
-    
-    all_vertices = []
-    all_faces = []
-    vertex_offset = 0
-    
-    for wpt in wpt_points:
-        # Преобразуем в UTM
-        x, y = transformer.transform(wpt['lon'], wpt['lat'])
-        center = (x, y)
-        
-        # Создаем цилиндр с высотой рельефа
-        vertices, faces = create_cylinder(center, radius, segments)
-        
-        # Добавляем вершины и грани
-        all_vertices.extend(vertices)
-        all_faces.extend(faces + vertex_offset)
-        vertex_offset += len(vertices)
-    
-    return np.array(all_vertices), np.array(all_faces)
+def create_track_mesh(track_points, thickness, buffer_resolution=16):
+    """Создает STL меш для трека используя Shapely buffer + Delaunay.
 
+    Shapely LineString.buffer() автоматически объединяет перекрывающиеся
+    участки (когда трек идёт дважды по одному месту), гарантируя
+    единый корректный полигон без дублирующихся граней.
+    """
+    transformer     = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
+    transformer_inv = Transformer.from_crs(myLib.UTM, myLib.WGS84, always_xy=True)
 
-def create_track_mesh(track_points, thickness, segments_per_circle=16):
-    """Создает STL меш для трека с высотой по рельефу"""
-    transformer = Transformer.from_crs(myLib.WGS84, myLib.UTM, always_xy=True)
-    
-    # Преобразуем точки в UTM и получаем высоты
-    utm_points = []
+    # 1) Преобразуем трек в UTM (только XY)
+    xy_points = []
     for lat, lon in track_points:
         x, y = transformer.transform(lon, lat)
-        h = myLib.elevation_data.get_elevation(lat, lon)
-        if h is None or h < 0:
+        xy_points.append((x, y))
+
+    if len(xy_points) < 2:
+        return None, None
+
+    # 2) Строим 2D буфер — перекрывающиеся сегменты автоматически сливаются
+    line      = LineString(xy_points)
+    footprint = line.buffer(thickness / 2, resolution=buffer_resolution)
+    if isinstance(footprint, MultiPolygon):
+        footprint = unary_union(footprint)
+
+    # 3) Точки контура (Shapely даёт CCW для exterior)
+    boundary_coords = np.array(footprint.exterior.coords[:-1])  # без повторной точки
+    boundary_n      = len(boundary_coords)
+
+    # 4) Внутренняя сетка для более качественной триангуляции верхней поверхности
+    minx, miny, maxx, maxy = footprint.bounds
+    step         = thickness / 3
+    interior_pts = []
+    for gx in np.arange(minx + step / 2, maxx, step):
+        for gy in np.arange(miny + step / 2, maxy, step):
+            if footprint.contains(Point(gx, gy)):
+                interior_pts.append([gx, gy])
+
+    if interior_pts:
+        all_xy = np.vstack([boundary_coords, np.array(interior_pts)])
+    else:
+        all_xy = boundary_coords.copy()
+
+    total_n = len(all_xy)
+
+    # 5) Delaunay-триангуляция; оставляем только треугольники внутри footprint
+    tri             = Delaunay(all_xy)
+    valid_simplices = []
+    for simplex in tri.simplices:
+        cx, cy = all_xy[simplex].mean(axis=0)
+        if footprint.contains(Point(cx, cy)):
+            valid_simplices.append(simplex)
+
+    # 6) Высоты для каждой вершины
+    elevations = np.zeros(total_n)
+    for idx, (vx, vy) in enumerate(all_xy):
+        lon_v, lat_v = transformer_inv.transform(vx, vy)
+        h = myLib.elevation_data.get_elevation(lat_v, lon_v)
+        if h is None:
             h = 0
         h += ADD_H
+        if h < 0:
+            h = 0
+        elevations[idx] = h
 
-        utm_points.append((x, y, h))
-    
-    # Создаем толстую линию (высота определяется рельефом)
-    vertices, faces = create_thick_line(utm_points, thickness, segments_per_circle)
-    
-    return vertices, faces
+    # 7) Вершины: нижний слой (z=0) + верхний (z=elevation)
+    vertices_bot = np.column_stack([all_xy, np.zeros(total_n)])
+    vertices_top = np.column_stack([all_xy, elevations])
+    all_vertices = np.vstack([vertices_bot, vertices_top])
+
+    faces = []
+
+    # Нижняя поверхность (нормаль -Z: CW → порядок [s0, s2, s1])
+    for s in valid_simplices:
+        faces.append([s[0], s[2], s[1]])
+
+    # Верхняя поверхность (нормаль +Z: CCW → порядок [s0, s1, s2])
+    for s in valid_simplices:
+        faces.append([total_n + s[0], total_n + s[1], total_n + s[2]])
+
+    # Боковые стены по контуру (CCW контур → нормаль наружу)
+    for i in range(boundary_n):
+        j = (i + 1) % boundary_n
+        A = i;           B = j
+        C = total_n + i; D = total_n + j
+        faces.append([A, B, C])
+        faces.append([B, D, C])
+
+    return all_vertices, np.array(faces, dtype=int)
 
 
 

@@ -1,5 +1,6 @@
 import argparse
 import copy
+import os
 import sys
 import tracemalloc
 
@@ -65,9 +66,9 @@ def main():
         description="Генератор геоданных",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument('-C', '--contour', 
-                        action='store_true',
-                        help="Режим генерации для контура")
+    parser.add_argument('-C', '--contour',
+                        type=str,
+                        help="Путь к файлу контура (GeoJSON)")
     parser.add_argument('-s', '--step', 
                         type=int,
                         required=True,
@@ -86,8 +87,8 @@ def main():
 
     if args.contour:
         with myLib.Timer("Contour data loading"):
-            gpkd = gpd.read_file("contour.geojson")
-        generate("Contour", path, args.step, gpkd, water)
+            gpkd = gpd.read_file(args.contour)
+        generate(os.path.basename(args.contour), path, args.step, gpkd, water)
     else:
         with myLib.Timer("Region data loading"):
             gpkd = gpd.read_file("data/russia_regions.geojson")

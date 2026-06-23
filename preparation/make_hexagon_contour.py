@@ -9,8 +9,13 @@ import xml.etree.ElementTree as ET
 import math
 import json
 import sys
+import os
+from pathlib import Path
 from pyproj import Transformer, CRS
 from find_center import find_gpx_center
+
+# Добавляем корневую директорию в путь для импорта myLib
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import myLib
 
 
