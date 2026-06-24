@@ -42,6 +42,19 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
 
             logger.info(f"{'Height range':<50} {min_h:.2f}m - {max_h:.2f}m")
 
+        with myLib.Timer("Height filtering"):
+            total_filtered = 0
+            total_points = 0
+            
+            # Фильтруем только внутренние точки сетки (area_mesh)
+            for i, points in enumerate(area_mesh):
+                area_mesh[i], stats = myLib.filter_height_points(points, step_m, threshold=0.3)
+                total_filtered += stats['filtered_count']
+                total_points += stats['total_count']
+            
+            filter_percent = (total_filtered / total_points * 100) if total_points > 0 else 0
+            logger.info(f"{'Filtering results':<50} {total_filtered}/{total_points} ({filter_percent:.2f}%)")
+
         with myLib.Timer("Coordinate conversion"):
             utm_contour = [[(p[0], p[1], p[2]) for p in points] for points in contour]
             utm_mesh = [copy.deepcopy(utm_contour[i]) + [(p[0], p[1], p[2]) for p in points]

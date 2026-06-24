@@ -13,7 +13,7 @@ import numpy as np
 from OSMPythonTools.nominatim import Nominatim
 from OSMPythonTools.overpass import Overpass, overpassQueryBuilder
 from pyproj import Transformer
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 from shapely.geometry import MultiPolygon, Point, Polygon, shape
 
 import srtm
@@ -140,6 +140,75 @@ def GetHeight(points, step, water=None):
         new_points.append((points_utm[i][0], points_utm[i][1], h * coef))
 
     return new_points
+
+
+def filter_height_points(points, step_m, threshold=0.3):
+    """
+    Оптимизированная фильтрация точек высот с использованием KD-Tree
+    
+    Параметры:
+    - points: список точек [(x, y, z), ...]
+    - step_m: шаг сетки в метрах
+    - threshold: порог отклонения от медианы (0.3 = 30%)
+    
+    Возвращает:
+    - отфильтрованные точки
+    - статистику фильтрации {'filtered_count': int, 'total_count': int}
+    
+    Производительность: O(N log N)
+    """
+    if len(points) == 0:
+        return [], {'filtered_count': 0, 'total_count': 0}
+    
+    # Преобразуем в NumPy массив для быстрой обработки
+    points_array = np.array(points, dtype=np.float64)
+    coords = points_array[:, :2]  # x, y координаты
+    heights = points_array[:, 2]   # высоты
+    
+    # Строим KD-Tree для быстрого поиска соседей
+    tree = cKDTree(coords)
+    
+    filtered_heights = heights.copy()
+    filtered_count = 0
+    
+    # Радиус поиска для 8 соседей (включая диагональных)
+    # step_m * 1.5 гарантирует захват всех 8 соседей
+    search_radius = step_m * 1.5
+    
+    # Векторизованная обработка всех точек
+    for i, (px, py, pz) in enumerate(points):
+        # Ищем соседей в радиусе
+        indices = tree.query_ball_point([px, py], search_radius)
+        
+        # Исключаем саму точку из списка соседей
+        neighbor_indices = [j for j in indices if j != i]
+        
+        # Пропускаем фильтрацию, если недостаточно соседей
+        if len(neighbor_indices) < 3:
+            continue
+        
+        # Получаем высоты соседей
+        neighbor_heights = heights[neighbor_indices]
+        
+        # Вычисляем медиану высот соседей
+        median_height = np.median(neighbor_heights)
+        
+        # Проверяем отклонение от медианы
+        if median_height > 0:
+            deviation = abs(pz - median_height) / median_height
+            if deviation > threshold:
+                # Заменяем на медиану
+                filtered_heights[i] = median_height
+                filtered_count += 1
+    
+    # Формируем результат
+    filtered_points = np.column_stack([coords, filtered_heights])
+    stats = {
+        'filtered_count': filtered_count,
+        'total_count': len(points)
+    }
+    
+    return filtered_points.tolist(), stats
 
 
 def circle_points(cx, cy, radius, num_points):
