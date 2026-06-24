@@ -434,8 +434,15 @@ def vertices_faces_to_mesh(vertices, faces):
     return stl_mesh
 
 
-def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero):
-    """Создает STL модели для области"""
+def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance=None):
+    """Создает STL модели для области
+    
+    Args:
+        utm_contour: Контурные точки (верхняя поверхность)
+        utm_mesh: Внутренняя сетка (верхняя поверхность)
+        utm_contour_zero: Контурные точки (нижняя поверхность)
+        overlay_distance: Если задано, нижняя поверхность копирует верхнюю и смещается вниз на это расстояние (в метрах)
+    """
     list_stl = []
     count_stl = len(utm_contour)
     with Timer("Full STL generation"):
@@ -456,6 +463,18 @@ def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero):
 
                 area = area_stl(contour_scaled, area_scaled)
                 wall = wall_stl(contour_scaled, contour_zero_scaled)
-                bottom = bottom_stl(contour_zero_scaled)
+                
+                # Выбор типа нижней поверхности в зависимости от режима
+                if overlay_distance is not None:
+                    # Режим overlay: нижняя поверхность копирует верхнюю и смещается вниз
+                    # Копируем верхнюю поверхность и смещаем её вниз на overlay_distance
+                    bottom = copy.deepcopy(area)
+                    offset_mm = overlay_distance * SCALE
+                    for vector in bottom.vectors:
+                        vector[:, 2] -= offset_mm  # Смещаем все вершины вниз
+                else:
+                    # Обычный режим: плоская нижняя поверхность
+                    bottom = bottom_stl(contour_zero_scaled)
+                
                 list_stl.append(combined_stl(area, wall, bottom))
     return list_stl

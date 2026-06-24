@@ -4,6 +4,7 @@ import os
 import sys
 import tracemalloc
 
+import argcomplete
 import geojson
 import geopandas as gpd
 import numpy as np
@@ -14,10 +15,31 @@ from stl import mesh
 
 logger = myLib.logger
 
-def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
+def find_geojson_files(prefix, parsed_args):
+    """Находит файлы .geojson для автодополнения"""
+    import glob
+    files = glob.glob(f"{prefix}*.geojson")
+    # Также ищем в текущей директории
+    if not files:
+        files = glob.glob(f"*.geojson")
+    return files
+
+def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_distance=None) -> None:
+    """Генерирует STL модель области
+    
+    Args:
+        obl_name: Название области
+        path_save: Путь для сохранения файлов
+        step_m: Шаг генерации в метрах
+        oblast: Геоданные области
+        water: Данные о водных объектах
+        overlay_distance: Если задано, нижняя подложка повторяет форму верхнего контура и опускается на это расстояние (метры)
+    """
     total_timer = myLib.Timer(f"Processing {obl_name}")
     with total_timer:
         logger.info(f"{'Starting parameters':<50} Step: {step_m}m | Scale: {step_m * myLib.SCALE:.2f}mm")
+        if overlay_distance is not None:
+            logger.info(f"{'Overlay mode':<50} Enabled (distance: {overlay_distance}m)")
         
         with myLib.Timer("Geometry preparation"):
             geo_simply = myLib.multy_to_polygon(oblast.geometry, myLib.WGS84)
@@ -59,9 +81,15 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water) -> None:
             utm_contour = [[(p[0], p[1], p[2]) for p in points] for points in contour]
             utm_mesh = [copy.deepcopy(utm_contour[i]) + [(p[0], p[1], p[2]) for p in points]
                        for i, points in enumerate(area_mesh)]
-            utm_contour_zero = [[(p[0], p[1], 0) for p in points] for points in utm_contour]
+            
+            if overlay_distance is not None:
+                # В режиме overlay нижняя поверхность повторяет форму верхней, но опускается на overlay_distance
+                # Для контура создаем нижнюю поверхность для стенок
+                utm_contour_zero = [[(p[0], p[1], p[2] - overlay_distance) for p in points] for points in utm_contour]
+            else:
+                utm_contour_zero = [[(p[0], p[1], 0) for p in points] for points in utm_contour]
 
-        list_stl = myLib.make_stl_obl(utm_contour, utm_mesh, utm_contour_zero)
+        list_stl = myLib.make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance)
         
         with myLib.Timer("Saving STL files"):
             for i, obl in enumerate(list_stl):
@@ -79,17 +107,22 @@ def main():
         description="Генератор геоданных",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument('-C', '--contour',
+    parser.add_argument('-c', '--contour',
                         type=str,
-                        help="Путь к файлу контура (GeoJSON)")
-    parser.add_argument('-s', '--step', 
+                        help="Путь к файлу контура (GeoJSON)").completer = find_geojson_files
+    parser.add_argument('-s', '--step',
                         type=int,
                         required=True,
                         help="Шаг генерации (метры)")
-    parser.add_argument('-n', '--name', 
+    parser.add_argument('-n', '--name',
                         type=str,
                         help="Название области для генерации")
+    parser.add_argument('-o', '--overlay',
+                        type=float,
+                        default=None,
+                        help="Режим наложения: нижняя подложка повторяет форму верхнего контура и опускается на указанное расстояние (метры)")
     
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     with myLib.Timer("Water data loading"):
@@ -101,7 +134,7 @@ def main():
     if args.contour:
         with myLib.Timer("Contour data loading"):
             gpkd = gpd.read_file(args.contour)
-        generate(os.path.basename(args.contour), path, args.step, gpkd, water)
+        generate(os.path.basename(args.contour), path, args.step, gpkd, water, args.overlay)
     else:
         with myLib.Timer("Region data loading"):
             gpkd = gpd.read_file("data/russia_regions.geojson")
@@ -112,11 +145,11 @@ def main():
                 available = '\n'.join(gpkd["region"].unique())
                 logger.error(f"Область '{args.name}' не найдена. Доступные области:\n{available}")
                 exit(1)
-            generate(args.name, path, args.step, oblast, water)
+            generate(args.name, path, args.step, oblast, water, args.overlay)
         else:
             for region in gpkd["region"]:
                 oblast = gpkd[gpkd["region"] == region]
-                generate(region, path, args.step, oblast, water)
+                generate(region, path, args.step, oblast, water, args.overlay)
 
     size, peak = tracemalloc.get_traced_memory()
     logger.info(f"{'Memory usage':<50} {size/1024:>7.1f} KB")
