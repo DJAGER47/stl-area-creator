@@ -22,7 +22,7 @@ from stl import mesh
 
 logger = myLib.logger
 
-ADD_H = 150
+ADD_H = 0
 
 
 def parse_gpx(gpx_file):
