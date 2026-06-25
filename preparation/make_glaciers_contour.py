@@ -6,7 +6,7 @@
 import geopandas as gpd
 from shapely.geometry import box
 import matplotlib.pyplot as plt
-from download_glacier_data import GlacierDataDownloader, download_glaciers_for_region
+from _download_glacier_data import GlacierDataDownloader, download_glaciers_for_region
 import logging
 import sys
 import os

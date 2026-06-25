@@ -8,3 +8,4 @@ numpy-stl
 rasterio
 pyproj
 shapely
+argcomplete
