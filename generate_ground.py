@@ -24,7 +24,7 @@ def find_geojson_files(prefix, parsed_args):
         files = glob.glob(f"*.geojson")
     return files
 
-def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_distance=None) -> None:
+def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_distance=None, split=False, add_height=0.0) -> None:
     """Генерирует STL модель области
     
     Args:
@@ -34,6 +34,8 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_
         oblast: Геоданные области
         water: Данные о водных объектах
         overlay_distance: Если задано, нижняя подложка повторяет форму верхнего контура и опускается на это расстояние (метры)
+        split: Если True, сохранять каждую область по отдельности. Если False, объединить все объекты в один STL файл
+        add_height: Константное добавление высоты (метры) ко всем точкам. 0.0 — выключено
     """
     total_timer = myLib.Timer(f"Processing {obl_name}")
     with total_timer:
@@ -54,15 +56,19 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_
             max_h = 0
             for i, polygon in enumerate(contour):
                 contour[i] = myLib.GetHeight(polygon.exterior.coords, step_m, water)
+                contour[i] = [(p[0], p[1], p[2] + add_height) for p in contour[i]]
                 min_h = min(min_h, min(contour[i], key=lambda x: x[2])[2])
                 max_h = max(max_h, max(contour[i], key=lambda x: x[2])[2])
 
             for i, points in enumerate(area_mesh):
                 area_mesh[i] = myLib.GetHeight([(point.x, point.y) for point in points.geometry], step_m, water)
+                area_mesh[i] = [(p[0], p[1], p[2] + add_height) for p in area_mesh[i]]
                 min_h = min(min_h, min(area_mesh[i], key=lambda x: x[2])[2])
                 max_h = max(max_h, max(area_mesh[i], key=lambda x: x[2])[2])
 
             logger.info(f"{'Height range':<50} {min_h:.2f}m - {max_h:.2f}m")
+            if add_height:
+                logger.info(f"{'Constant height addition':<50} +{add_height}m")
 
         with myLib.Timer("Height filtering"):
             total_filtered = 0
@@ -92,10 +98,20 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_
         list_stl = myLib.make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance)
         
         with myLib.Timer("Saving STL files"):
-            for i, obl in enumerate(list_stl):
-                filename = f'{path_save}{obl_name}_{step_m}_{i}.stl'
-                obl.save(filename)
-                logger.info(f"Saved {filename}")
+            if split:
+                for i, obl in enumerate(list_stl):
+                    filename = f'{path_save}{obl_name}_{step_m}_{i}.stl'
+                    obl.save(filename)
+            else:
+                combined_vectors = np.concatenate([obl.vectors for obl in list_stl])
+                combined_mesh = mesh.Mesh(np.zeros(combined_vectors.shape[0], dtype=mesh.Mesh.dtype))
+                for i, f in enumerate(combined_vectors):
+                    combined_mesh.vectors[i] = f
+                combined_mesh.update_normals()
+                filename = f'{path_save}{obl_name}_{step_m}.stl'
+                combined_mesh.save(filename)
+
+            logger.info(f"Saved {filename}")
 
 def main():
     tracemalloc.start()
@@ -121,6 +137,14 @@ def main():
                         type=float,
                         default=None,
                         help="Режим наложения: нижняя подложка повторяет форму верхнего контура и опускается на указанное расстояние (метры)")
+    parser.add_argument('--split',
+                        action='store_true',
+                        default=False,
+                        help="Сохранять каждую область по отдельности. Если не указан, все объекты объединяются в один STL файл")
+    parser.add_argument('--add-height',
+                        type=float,
+                        default=0.0,
+                        help="Константное добавление высоты (метры) ко всем точкам модели. По умолчанию выключено (0.0)")
     
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -134,7 +158,7 @@ def main():
     if args.contour:
         with myLib.Timer("Contour data loading"):
             gpkd = gpd.read_file(args.contour)
-        generate(os.path.basename(args.contour), path, args.step, gpkd, water, args.overlay)
+        generate(os.path.basename(args.contour), path, args.step, gpkd, water, args.overlay, args.split, args.add_height)
     else:
         with myLib.Timer("Region data loading"):
             gpkd = gpd.read_file("data/russia_regions.geojson")
@@ -145,11 +169,11 @@ def main():
                 available = '\n'.join(gpkd["region"].unique())
                 logger.error(f"Область '{args.name}' не найдена. Доступные области:\n{available}")
                 exit(1)
-            generate(args.name, path, args.step, oblast, water, args.overlay)
+            generate(args.name, path, args.step, oblast, water, args.overlay, args.split, args.add_height)
         else:
             for region in gpkd["region"]:
                 oblast = gpkd[gpkd["region"] == region]
-                generate(region, path, args.step, oblast, water, args.overlay)
+                generate(region, path, args.step, oblast, water, args.overlay, args.split, args.add_height)
 
     size, peak = tracemalloc.get_traced_memory()
     logger.info(f"{'Memory usage':<50} {size/1024:>7.1f} KB")

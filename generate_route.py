@@ -23,9 +23,6 @@ from stl import mesh
 
 logger = myLib.logger
 
-ADD_H = 0
-
-
 def parse_gpx(gpx_file):
     """Парсит GPX файл и извлекает wpt точки и трек"""
     ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
@@ -52,7 +49,7 @@ def parse_gpx(gpx_file):
     return wpt_points, track_points
 
 
-def create_wpt_cylinders(wpt_points, radius, buffer_resolution=32):
+def create_wpt_cylinders(wpt_points, radius, buffer_resolution=32, add_height=0.0):
     """Создает STL меши для wpt-точек через Shapely Point.buffer() + Delaunay.
 
     Аналогично create_track_mesh(): каждый столбик — это круговой полигон,
@@ -106,7 +103,7 @@ def create_wpt_cylinders(wpt_points, radius, buffer_resolution=32):
             h = myLib.elevation_data.get_elevation(lat_v, lon_v)
             if h is None:
                 h = 0
-            h += ADD_H
+            h += add_height
             if h < 0:
                 h = 0
             elevations[idx] = h
@@ -145,7 +142,7 @@ def create_wpt_cylinders(wpt_points, radius, buffer_resolution=32):
     return np.array(all_vertices, dtype=float), np.array(all_faces, dtype=int)
 
 
-def create_track_mesh(track_points, thickness, buffer_resolution=16):
+def create_track_mesh(track_points, thickness, buffer_resolution=16, add_height=0.0):
     """Создает STL меш для трека используя Shapely buffer + Delaunay.
 
     Shapely LineString.buffer() автоматически объединяет перекрывающиеся
@@ -205,7 +202,7 @@ def create_track_mesh(track_points, thickness, buffer_resolution=16):
         h = myLib.elevation_data.get_elevation(lat_v, lon_v)
         if h is None:
             h = 0
-        h += ADD_H
+        h += add_height
         if h < 0:
             h = 0
         elevations[idx] = h
@@ -236,7 +233,7 @@ def create_track_mesh(track_points, thickness, buffer_resolution=16):
     return all_vertices, np.array(faces, dtype=int)
 
 
-def create_unified_mesh(wpt_points, track_points, wpt_radius, track_thickness, buffer_resolution=16):
+def create_unified_mesh(wpt_points, track_points, wpt_radius, track_thickness, buffer_resolution=16, add_height=0.0):
     """Создаёт единый STL меш из wpt-точек и трека, используя общий полигон.
     
     Объединяет все wpt-точки и трек в один полигон через Shapely unary_union,
@@ -317,7 +314,7 @@ def create_unified_mesh(wpt_points, track_points, wpt_radius, track_thickness, b
         h = myLib.elevation_data.get_elevation(lat_v, lon_v)
         if h is None:
             h = 0
-        h += ADD_H
+        h += add_height
         if h < 0:
             h = 0
         elevations[idx] = h
@@ -334,7 +331,7 @@ def create_unified_mesh(wpt_points, track_points, wpt_radius, track_thickness, b
     return all_vertices, np.array(faces, dtype=int)
 
 
-def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overlay_distance=None):
+def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overlay_distance=None, add_height=0.0):
     """Генерирует STL модель маршрута из GPX файла
     
     Args:
@@ -343,6 +340,7 @@ def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overl
         wpt_radius: Радиус столбиков для wpt точек (метры)
         track_thickness: Толщина линии маршрута (метры)
         overlay_distance: Если задано, нижняя подложка повторяет форму верхнего контура и опускается на это расстояние (метры)
+        add_height: Константное добавление высоты (метры) ко всем точкам модели. 0.0 — выключено
     """
     with myLib.Timer("GPX parsing"):
         wpt_points, track_points = parse_gpx(gpx_file)
@@ -354,7 +352,7 @@ def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overl
         # В overlay-режиме создаём единый полигон из wpt и track
         with myLib.Timer("Unified mesh creation"):
             unified_vertices, unified_faces = create_unified_mesh(
-                wpt_points, track_points, wpt_radius, track_thickness
+                wpt_points, track_points, wpt_radius, track_thickness, add_height=add_height
             )
             
             if unified_vertices is None:
@@ -424,11 +422,11 @@ def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overl
     else:
         # Обычный режим: создаём отдельные меши для wpt и track
         with myLib.Timer("WPT cylinders creation"):
-            wpt_vertices, wpt_faces = create_wpt_cylinders(wpt_points, wpt_radius)
+            wpt_vertices, wpt_faces = create_wpt_cylinders(wpt_points, wpt_radius, add_height=add_height)
             logger.info(f"WPT vertices: {len(wpt_vertices)}, faces: {len(wpt_faces)}")
         
         with myLib.Timer("Track mesh creation"):
-            track_vertices, track_faces = create_track_mesh(track_points, track_thickness)
+            track_vertices, track_faces = create_track_mesh(track_points, track_thickness, add_height=add_height)
             if track_vertices is not None:
                 logger.info(f"Track vertices: {len(track_vertices)}, faces: {len(track_faces)}")
             else:
@@ -484,16 +482,20 @@ def main():
                         help="Путь для сохранения STL файла")
     parser.add_argument('--wpt-radius',
                         type=float,
-                        default=400,
+                        default=700,
                         help="Радиус столбиков для wpt точек (метры)")
     parser.add_argument('--track-thickness',
                         type=float,
-                        default=300,
+                        default=500,
                         help="Толщина линии маршрута (метры)")
     parser.add_argument('--overlay',
                         type=float,
                         default=None,
                         help="Режим наложения: нижняя подложка повторяет форму верхнего контура и опускается на указанное расстояние (метры)")
+    parser.add_argument('--add-height',
+                        type=float,
+                        default=0.0,
+                        help="Константное добавление высоты (метры) ко всем точкам модели. По умолчанию выключено (0.0)")
     args = parser.parse_args()
     
     with myLib.Timer("Total generation"):
@@ -502,7 +504,8 @@ def main():
             args.output,
             args.wpt_radius,
             args.track_thickness,
-            args.overlay
+            args.overlay,
+            args.add_height
         )
     
     size, peak = tracemalloc.get_traced_memory()

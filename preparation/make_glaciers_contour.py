@@ -134,6 +134,15 @@ def main():
     """
     Основная функция для загрузки и фильтрации ледников по контуру.
     """
+    parser = argparse.ArgumentParser(
+        description="Загрузка ледников по контуру"
+    )
+    parser.add_argument(
+        '--plot', '-p', action='store_true',
+        help='Показать график с контуром и ледниками'
+    )
+    args = parser.parse_args()
+
     print("=== Поиск ледников внутри контура ===\n")
     
     # 1. Загружаем контур
@@ -161,7 +170,7 @@ def main():
         logger.warning("RGI не дал результатов, пробуем GLIMS...")
         # Если RGI не сработал, пробуем GLIMS
         glaciers_gdf = downloader.download_glims_data(
-            "Кавказ", bounds[0], bounds[1], bounds[2], bounds[3], 
+            "Кавказ", bounds[0], bounds[1], bounds[2], bounds[3],
             "temp_glaciers.geojson"
         )
     
@@ -177,8 +186,9 @@ def main():
     # 4. Фильтруем ледники по контуру
     filtered_glaciers = filter_glaciers_by_contour(glaciers_gdf, contour_gdf)
     
-    # 5. Визуализируем результаты
-    visualize_results(contour_gdf, glaciers_gdf, filtered_glaciers)
+    # 5. Визуализируем результаты (только если запрошено)
+    if args.plot:
+        visualize_results(contour_gdf, glaciers_gdf, filtered_glaciers)
     
     # 6. Сохраняем результаты
     if not filtered_glaciers.empty:

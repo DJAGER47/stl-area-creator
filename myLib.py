@@ -75,11 +75,6 @@ def scale_elevation(elevations):
     adjusted_elevations = [(x * SCALE, y * SCALE, func(h) / func(6000) * 5) for (x, y, h) in elevations]
     return np.array(adjusted_elevations)
 
-# def scale_elevation(elevations):
-#     """Масштабирование высот"""
-#     adjusted_elevations = [(x * SCALE, y * SCALE, h * SCALE) for (x, y, h) in elevations]
-#     return np.array(adjusted_elevations)
-
 def frange(start, stop, step):
     """Генератор диапазона с плавающей точкой"""
     while start < stop:
