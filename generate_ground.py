@@ -88,12 +88,10 @@ def generate(obl_name: str, path_save: str, step_m: int, oblast, water, overlay_
             utm_mesh = [copy.deepcopy(utm_contour[i]) + [(p[0], p[1], p[2]) for p in points]
                        for i, points in enumerate(area_mesh)]
             
-            if overlay_distance is not None:
-                # В режиме overlay нижняя поверхность повторяет форму верхней, но опускается на overlay_distance
-                # Для контура создаем нижнюю поверхность для стенок
-                utm_contour_zero = [[(p[0], p[1], p[2] - overlay_distance) for p in points] for points in utm_contour]
-            else:
+            if overlay_distance is None:
                 utm_contour_zero = [[(p[0], p[1], 0) for p in points] for points in utm_contour]
+            else:
+                utm_contour_zero = None
 
         list_stl = myLib.make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance)
         

@@ -65,6 +65,9 @@ def func(x_values):
     """Логарифмическая функция для масштабирования высот"""
     return np.log2(x_values * 0.005 + 1)
 
+def calculate_h(h_values):
+    return func(h_values) / func(6000) * 5
+
 # def scale_elevation(elevations):
 #     """Масштабирование высот"""
 #     adjusted_elevations = [(x * SCALE, y * SCALE, func(h) / func(6000) * 25) for (x, y, h) in elevations]
@@ -72,7 +75,7 @@ def func(x_values):
 
 def scale_elevation(elevations):
     """Масштабирование высот"""
-    adjusted_elevations = [(x * SCALE, y * SCALE, func(h) / func(6000) * 5) for (x, y, h) in elevations]
+    adjusted_elevations = [(x * SCALE, y * SCALE, calculate_h(h)) for (x, y, h) in elevations]
     return np.array(adjusted_elevations)
 
 def frange(start, stop, step):
@@ -435,21 +438,32 @@ def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance=None)
     Args:
         utm_contour: Контурные точки (верхняя поверхность)
         utm_mesh: Внутренняя сетка (верхняя поверхность)
-        utm_contour_zero: Контурные точки (нижняя поверхность)
+        utm_contour_zero: Контурные точки (нижняя поверхность). В режиме overlay
+            передаётся как None — нижний контур формируется здесь, после scale_elevation,
+            чтобы смещение по Z не искажалось логарифмическим calculate_h.
         overlay_distance: Если задано, нижняя поверхность копирует верхнюю и смещается вниз на это расстояние (в метрах)
     """
     list_stl = []
+    if overlay_distance is not None:
+        offset_mm = overlay_distance * SCALE
+        
     count_stl = len(utm_contour)
     with Timer("Full STL generation"):
         for i in range(count_stl):
             with Timer(f"STL part {i+1}"):
                 contour_scaled = scale_elevation(utm_contour[i])
                 area_scaled = scale_elevation(utm_mesh[i])
-                contour_zero_scaled = scale_elevation(utm_contour_zero[i])
+
+                if overlay_distance is not None:
+                    contour_zero_scaled = contour_scaled.copy()
+                    contour_zero_scaled[:, 2] = contour_zero_scaled[:, 2] - offset_mm
+                    contour_zero_scaled[:, 2] = np.maximum(contour_zero_scaled[:, 2], 0)
+                else:
+                    contour_zero_scaled = scale_elevation(utm_contour_zero[i])
 
                 logger.info(f"Contour: {len(utm_contour[i])} points | "
                             f"Area: {len(utm_mesh[i])} points | "
-                            f"Zero: {len(utm_contour_zero[i])} points")
+                            f"Zero: {len(contour_zero_scaled)} points")
 
                 min_h = min(area_scaled, key=lambda x: x[2])[2]
                 max_h = max(area_scaled, key=lambda x: x[2])[2]
@@ -458,18 +472,14 @@ def make_stl_obl(utm_contour, utm_mesh, utm_contour_zero, overlay_distance=None)
 
                 area = area_stl(contour_scaled, area_scaled)
                 wall = wall_stl(contour_scaled, contour_zero_scaled)
-                
-                # Выбор типа нижней поверхности в зависимости от режима
+
                 if overlay_distance is not None:
-                    # Режим overlay: нижняя поверхность копирует верхнюю и смещается вниз
-                    # Копируем верхнюю поверхность и смещаем её вниз на overlay_distance
                     bottom = copy.deepcopy(area)
-                    offset_mm = overlay_distance * SCALE
                     for vector in bottom.vectors:
                         vector[:, 2] -= offset_mm  # Смещаем все вершины вниз
+                        vector[:, 2] = np.maximum(vector[:, 2], 0)  # Не опускаемся ниже z=0
                 else:
-                    # Обычный режим: плоская нижняя поверхность
                     bottom = bottom_stl(contour_zero_scaled)
-                
+
                 list_stl.append(combined_stl(area, wall, bottom))
     return list_stl

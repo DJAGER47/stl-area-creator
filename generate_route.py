@@ -377,6 +377,7 @@ def generate_route_stl(gpx_file, output_file, wpt_radius, track_thickness, overl
             top_vertices = unified_vertices.copy()
             bottom_vertices = unified_vertices.copy()
             bottom_vertices[:, 2] -= offset_mm  # Смещаем нижнюю поверхность вниз
+            bottom_vertices[:, 2] = np.maximum(bottom_vertices[:, 2], 0)  # Не опускаемся ниже z=0
             
             # Объединяем все вершины
             all_vertices = np.vstack([top_vertices, bottom_vertices])
@@ -474,7 +475,7 @@ def main():
     )
     parser.add_argument('-i', '--input',
                         type=str,
-                        default="Планируемый путь.gpx",
+                        default="path.gpx",
                         help="Путь к GPX файлу")
     parser.add_argument('-o', '--output',
                         type=str,

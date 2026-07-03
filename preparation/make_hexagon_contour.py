@@ -8,6 +8,7 @@
 
 Общие параметры:
   --rotation <deg>  — поворот гексагона в градусах (по умолчанию 0)
+  --scale <x>       — коэффициент масштабирования размера гексагона (по умолчанию 1.0)
   --output <file>   — путь к выходному GeoJSON файлу
   --plot            — показать график с треком и гексагоном
 """
@@ -295,6 +296,7 @@ def run_track_mode(args):
     gpx_file = args.track
     output_file = args.output or "contour.geojson"
     rotation_deg = args.rotation
+    scale = args.scale
 
     # Проверяем существование GPX файла
     if not os.path.exists(gpx_file):
@@ -304,6 +306,7 @@ def run_track_mode(args):
     print(f"Режим: track")
     print(f"Обработка файла: {gpx_file}")
     print(f"Поворот: {rotation_deg}°")
+    print(f"Масштаб: {scale}")
 
     # Находим центр всех точек
     center = find_gpx_center(gpx_file)
@@ -325,7 +328,8 @@ def run_track_mode(args):
 
     # Вычисляем радиус гексагона в метрах
     radius_meters = calculate_hexagon_radius(center_lat, center_lon, bounds)
-    print(f"Радиус гексагона: {radius_meters:.2f} метров")
+    radius_meters = radius_meters * scale
+    print(f"Радиус гексагона: {radius_meters:.2f} метров (с учётом масштаба {scale})")
 
     # Генерируем вершины гексагона с поворотом
     vertices = generate_hexagon_vertices(center_lat, center_lon, radius_meters, rotation_deg)
@@ -358,14 +362,16 @@ def run_center_radius_mode(args):
     """
     center_lat = args.lat
     center_lon = args.lon
-    radius_meters = args.radius
+    radius_meters = args.radius * args.scale
     output_file = args.output or "contour.geojson"
     rotation_deg = args.rotation
+    scale = args.scale
 
     print(f"Режим: center-radius")
     print(f"Центр: lat={center_lat:.6f}, lon={center_lon:.6f}")
-    print(f"Радиус: {radius_meters:.2f} метров")
+    print(f"Радиус: {radius_meters:.2f} метров (с учётом масштаба {scale})")
     print(f"Поворот: {rotation_deg}°")
+    print(f"Масштаб: {scale}")
 
     # Генерируем вершины гексагона с поворотом
     vertices = generate_hexagon_vertices(center_lat, center_lon, radius_meters, rotation_deg)
@@ -419,6 +425,13 @@ def main():
         type=float,
         default=0,
         help="Поворот гексагона в градусах (по умолчанию: 0)"
+    )
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="Коэффициент масштабирования размера гексагона (по умолчанию: 1.0). "
+             "Например, 1.1 увеличит размер на 10%%, 0.9 — уменьшит на 10%%"
     )
     parser.add_argument(
         "--output", "-o",

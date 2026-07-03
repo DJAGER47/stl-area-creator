@@ -3,6 +3,7 @@
 Скрипт для загрузки ледников и фильтрации по контуру из contour.geojson
 """
 
+import argparse
 import geopandas as gpd
 from shapely.geometry import box
 import matplotlib.pyplot as plt
