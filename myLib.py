@@ -21,7 +21,7 @@ import copernicus
 from stl import mesh
 
 # Константы
-SCALE = 0.0003
+SCALE = 0.001 #0.0003
 WATER_SETBACK = 10 * 1000  # 10 км от воды
 WGS84 = 'EPSG:4326'
 UTM = 'EPSG:32646'
@@ -66,12 +66,7 @@ def func(x_values):
     return np.log2(x_values * 0.005 + 1)
 
 def calculate_h(h_values):
-    return func(h_values) / func(6000) * 5
-
-# def scale_elevation(elevations):
-#     """Масштабирование высот"""
-#     adjusted_elevations = [(x * SCALE, y * SCALE, func(h) / func(6000) * 25) for (x, y, h) in elevations]
-#     return np.array(adjusted_elevations)
+    return func(h_values) / func(6000) * 15 #25
 
 def scale_elevation(elevations):
     """Масштабирование высот"""
@@ -134,6 +129,7 @@ def GetHeight(points, step, water=None):
                 multy += 1
 
         if h < 0:
+            logger.info(f"h < 0: {h}")
             h = 0
         new_points.append((points_utm[i][0], points_utm[i][1], h * coef))
 
